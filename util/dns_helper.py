@@ -29,7 +29,7 @@ class Answer:
         self._rData = _rData
 
 
-def parse(plainResonse: bytes):
+def parse(plainResonse: bytes, query: None or 'offetQuestion' or 'offetAnswer' or 'offetAuthority' or 'offetAdditional' = None):
     # https://tools.ietf.org/html/rfc1035#24
     try:
         offetHeader = 0
@@ -41,6 +41,8 @@ def parse(plainResonse: bytes):
         _ar_count = struct.unpack_from('>H', plainResonse, 10)[0]
         # print(_qd_count, _an_count, _ns_count, _ar_count)
         offetQuestion = offetHeader + 12
+        if query == 'offetQuestion':
+            return offetQuestion
         dns = DNS(_id, [], [])
         # Question
         for i in range(_qd_count):
@@ -48,16 +50,22 @@ def parse(plainResonse: bytes):
             dns.query.append(query)
         # Answer
         offetAnswer = offetQuestion
+        if query == 'offetAnswer':
+            return offetAnswer
         for i in range(_an_count):
             offetAnswer, answer = parse_RR(plainResonse, offetAnswer)
             if len(answer._rData) <= 15:  # \d{3}.\d{3}.\d{3}.\d{3}
                 dns.answer.append(answer)
         # Authority records
         offetAuthority = offetAnswer
+        if query == 'offetAuthority':
+            return offetAuthority
         for i in range(_ns_count):
             offetAuthority, _ = parse_RR(plainResonse, offetAuthority)
         # Additional records
         offetAdditional = offetAuthority
+        if query == 'offetAdditional':
+            return offetAdditional
         for i in range(_ar_count):
             offetAdditional, _ = parse_RR(plainResonse, offetAdditional)
         return dns
@@ -136,6 +144,37 @@ def parse_RR(plainResonse: bytes, offset_RR):
     return offsetEnd, answer
 
 
+def _write_query(_io, domain):
+    # 写域名
+    labels = domain.split('.')
+    for label in labels:
+        bytes_label = label.encode()
+        _io.write(len(bytes_label).to_bytes(1, byteorder='big', signed=False))
+        _io.write(bytes_label)
+    _io.write(b'\x00')
+    # 写类型
+    # type A, class IN
+    type_and_class = bytearray(4)
+    struct.pack_into('>HH', type_and_class, 0, 1, 1)
+    _io.write(type_and_class)
+
+
+def _write_answer(_io, domain, ip, ttl):
+    # 写域名
+    labels = domain.split('.')
+    for label in labels:
+        bytes_label = label.encode()
+        _io.write(len(bytes_label).to_bytes(1, byteorder='big', signed=False))
+        _io.write(bytes_label)
+    _io.write(b'\x00')
+    # 其它
+    type_class_ttl_iplength = bytearray(10)
+    struct.pack_into('>HHIH', type_class_ttl_iplength, 0, 1, 1, ttl, 4)
+    _io.write(type_class_ttl_iplength)
+    # 写ip
+    _io.write(socket.inet_aton(ip))
+
+
 def gen_A_query(domain, id=0):
     # https://tools.ietf.org/html/rfc1035#24
     # qd =1, an=ns=ar=0,
@@ -146,18 +185,19 @@ def gen_A_query(domain, id=0):
     header = bytearray(12)
     struct.pack_into('>HHHHHH', header, 0, id, 0, 1, 0, 0, 0)
     f.write(header)
-    # 写域名
-    labels = domain.split('.')
-    for label in labels:
-        bytes_label = label.encode()
-        f.write(len(bytes_label).to_bytes(1, byteorder='big', signed=False))
-        f.write(bytes_label)
-    f.write(b'\x00')
-    # 写类型
-    # type A, class IN
-    type_and_class = bytearray(4)
-    struct.pack_into('>HH', type_and_class, 0, 1, 1)
-    f.write(type_and_class)
+    # 写query
+    _write_query(f, domain)
+    data = f.getvalue()
+    f.close()
+    return data
+
+
+def gen_empty_response(domain, id=0):
+    f = BytesIO()
+    header = bytearray(12)
+    struct.pack_into('>HHHHHH', header, 0, id, 33152, 1, 0, 0, 0)
+    f.write(header)
+    _write_query(f, domain)
     data = f.getvalue()
     f.close()
     return data
@@ -171,21 +211,10 @@ def gen_A_response(domain, ip, id=0, ttl=19808):
     f = BytesIO()
     # 写头部
     header = bytearray(12)
-    struct.pack_into('>HHHHHH', header, 0, id, 33152, 0, 1, 0, 0)
+    struct.pack_into('>HHHHHH', header, 0, id, 33152, 1, 1, 0, 0)
     f.write(header)
-    # 写域名
-    labels = domain.split('.')
-    for label in labels:
-        bytes_label = label.encode()
-        f.write(len(bytes_label).to_bytes(1, byteorder='big', signed=False))
-        f.write(bytes_label)
-    f.write(b'\x00')
-    # 其它
-    type_class_ttl_iplength = bytearray(10)
-    struct.pack_into('>HHIH', type_class_ttl_iplength, 0, 1, 1, ttl, 4)
-    f.write(type_class_ttl_iplength)
-    # 写ip
-    f.write(socket.inet_aton(ip))
+    _write_query(f, domain)
+    _write_answer(f, domain, ip, ttl)
     data = f.getvalue()
     f.close()
     return data
