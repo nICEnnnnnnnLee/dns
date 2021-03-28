@@ -31,13 +31,13 @@ async def get(host, *kargs, **kwargs):
     return await request(host, *kargs, method='GET', **kwargs)
 
 async def request(host: str, path: str = '/', port: int = None, \
-    scheme: str = 'HTTPS', server_hostname: str = None, \
+    scheme: str = 'HTTPS', server_hostname: str = None, verify = True, \
     method: str = 'GET', data:bytes = None, timeout = 20.0, headers: dict = None):
     # set default settings
     if scheme == 'HTTPS':
         port = 443 if port is None else port
         server_hostname = host if server_hostname is None else server_hostname
-        _ssl = ssl._create_unverified_context()
+        _ssl = True if verify else ssl._create_unverified_context()
     else:
         port = 80 if port is None else port
         server_hostname = None
